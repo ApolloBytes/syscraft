@@ -27,7 +27,7 @@ Debian/Ubuntu-based distributions are currently not supported.
 ## Usage
 
 ```sh
-git clone https://github.com/yourusername/syscraft.git
+git clone https://github.com/KXNDevs/syscraft.git
 cd syscraft
 chmod +x syscraft
 ./syscraft
