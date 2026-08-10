@@ -11,7 +11,7 @@ die() {
 
 yesno() {
     printf "%s [y/N] " "$1"
-    read ans
+    read -r ans
     case "$ans" in
         y|Y|yes|YES) return 0 ;;
         *) return 1 ;;
@@ -21,7 +21,7 @@ yesno() {
 [ -r /etc/os-release ] || die "can't detect distro"
 . /etc/os-release
 
-case " $ID $ID_LIKE " in
+case " $ID ${ID_LIKE:-} " in
     *" debian "*|*" ubuntu "*)
         echo "Debian/Ubuntu based systems aren't supported."
         exit 1
@@ -79,34 +79,50 @@ if command -v flatpak >/dev/null 2>&1; then
 fi
 
 # Repositories
-if [ "$family" = fedora ] && [ "$immutable" = 0 ]; then
-    if yesno "Enable RPM Fusion?"; then
-        sudo dnf install -y \
-            "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
-            "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
-    fi
+terra=0
 
-    if yesno "Enable Terra?"; then
-        sudo dnf copr enable -y terra/terra
+if [ "$family" = fedora ]; then
+
+    if [ "$immutable" = 0 ]; then
+        if yesno "Enable RPM Fusion?"; then
+            sudo dnf install -y \
+                "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
+                "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
+        fi
+
+        if yesno "Enable Terra?"; then
+            sudo dnf install -y --nogpgcheck \
+                --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' \
+                terra-release
+            terra=1
+        fi
+    else
+        # Atomic/rpm-ostree Fedora uses a plain repo file + layered
+        # package instead of dnf's --repofrompath.
+        if yesno "Enable Terra?"; then
+            curl -fsSL \
+                https://github.com/terrapkg/subatomic-repos/raw/main/terra.repo |
+                sudo tee /etc/yum.repos.d/terra.repo >/dev/null
+            sudo rpm-ostree install terra-release
+            terra=1
+        fi
     fi
 
 elif [ "$family" = arch ]; then
 
-    if [ "$ID" = cachyos ]; then
-        if yesno "Install/update CachyOS repos?"; then
-            tmp=$(mktemp -d)
-            trap 'rm -rf "$tmp"' EXIT
+    if yesno "Install/update CachyOS repos?"; then
+        tmp=$(mktemp -d)
+        trap 'rm -rf "$tmp"' EXIT
 
-            cd "$tmp"
-            curl -fL \
-                https://mirror.cachyos.org/cachyos-repo.tar.xz \
-                -o cachyos-repo.tar.xz
+        cd "$tmp"
+        curl -fL \
+            https://mirror.cachyos.org/cachyos-repo.tar.xz \
+            -o cachyos-repo.tar.xz
 
-            tar -xf cachyos-repo.tar.xz
-            cd cachyos-repo
-            sudo ./cachyos-repo.sh
-            cd /
-        fi
+        tar -xf cachyos-repo.tar.xz
+        cd cachyos-repo
+        sudo ./cachyos-repo.sh
+        cd /
     fi
 
     if yesno "Enable Chaotic AUR?"; then
@@ -140,7 +156,7 @@ echo "  4) Chromium"
 echo "  5) None"
 
 printf "> "
-read browser
+read -r browser
 
 case "$browser" in
     1) browser=firefox ;;
@@ -159,7 +175,7 @@ echo "  3) Equibop"
 echo "  4) None"
 
 printf "> "
-read discord
+read -r discord
 
 case "$discord" in
     1) discord=discord ;;
@@ -238,7 +254,9 @@ case "$family" in
         [ "$browser" = firefox ] && add firefox
         [ "$browser" = chromium ] && add chromium
 
-        [ "$discord" = discord ] && add discord
+        # discord isn't in Fedora's repos or RPM Fusion; only Terra
+        # carries it. Without Terra, fall back to Flatpak later.
+        [ "$discord" = discord ] && [ "$terra" = 1 ] && add discord
 
         [ "$steam" = 1 ] && add steam
         [ "$lutris" = 1 ] && add lutris
@@ -264,11 +282,11 @@ case "$family" in
         [ "$browser" = firefox ] && add firefox
         [ "$browser" = librewolf ] && add librewolf
         [ "$browser" = chromium ] && add chromium
-        [ "$browser" = zen ] && add zen-browser
+        [ "$browser" = zen ] && add zen-browser-bin
 
         [ "$discord" = discord ] && add discord
-        [ "$discord" = vesktop ] && add vesktop
-        [ "$discord" = equibop ] && add equibop
+        [ "$discord" = vesktop ] && add vesktop-bin
+        [ "$discord" = equibop ] && add equibop-bin
 
         [ "$steam" = 1 ] && add steam
         [ "$lutris" = 1 ] && add lutris
@@ -329,6 +347,14 @@ if command -v flatpak >/dev/null 2>&1; then
     esac
 
     case "$discord" in
+        discord)
+            # On Arch, native "discord" already came from chaotic-aur.
+            # On Fedora, it only comes from Terra - if that wasn't
+            # enabled (or on Atomic, where nothing else installs it),
+            # fall back to the official Flathub build.
+            [ "$family" = fedora ] && [ "$terra" != 1 ] &&
+                flatpak_install com.discordapp.Discord
+            ;;
         vesktop)
             flatpak_install dev.vencord.Vesktop
             ;;
